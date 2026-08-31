@@ -1,7 +1,5 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/dynamodb';
-import Payment from '@/models/Payment';
-import Order from '@/models/Order';
+import { paymentRepository } from '@/lib/dynamodb/repositories/paymentRepository';
 import { requireAdmin } from '@/lib/auth-utils';
 import { verifyPaymentSchema } from '@/validators/order';
 import { successResponse, errorResponse } from '@/lib/api-response';
@@ -33,9 +31,7 @@ export async function PUT(
 
     const { status, rejectionReason } = validatedData.data;
 
-    await connectDB();
-
-    const payment = await Payment.findById(id);
+    const payment = await paymentRepository.getPaymentById(id);
 
     if (!payment) {
       return errorResponse('Payment not found', 404);
@@ -45,30 +41,37 @@ export async function PUT(
       return errorResponse('Payment has already been processed', 400);
     }
 
-    // Update payment status
-    payment.status = status;
-    payment.verifiedBy = sessionUser.id;
-    payment.verifiedAt = new Date();
+    const updatedPayment = await paymentRepository.verifyPayment(
+      id,
+      status,
+      sessionUser.id,
+      rejectionReason
+    );
 
-    if (status === 'rejected' && rejectionReason) {
-      payment.rejectionReason = rejectionReason;
+    if (!updatedPayment) {
+      return errorResponse('Failed to process payment', 500);
     }
 
-    await payment.save();
+    const response = {
+      id: updatedPayment.paymentId,
+      orderId: updatedPayment.orderId,
+      userId: updatedPayment.userId,
+      method: updatedPayment.method,
+      transactionId: updatedPayment.transactionId,
+      phoneNumber: updatedPayment.phoneNumber,
+      amount: updatedPayment.amount,
+      status: updatedPayment.status,
+      verifiedBy: updatedPayment.verifiedBy,
+      verifiedAt: updatedPayment.verifiedAt,
+      rejectionReason: updatedPayment.rejectionReason,
+      updatedAt: updatedPayment.updatedAt,
+    };
 
-    // Update order status
-    const order = await Order.findById(payment.order);
+    const message = status === 'verified' 
+      ? 'Payment verified successfully' 
+      : 'Payment rejected successfully';
 
-    if (order) {
-      if (status === 'verified') {
-        order.status = 'paid';
-      } else if (status === 'rejected') {
-        order.status = 'payment_rejected';
-      }
-      await order.save();
-    }
-
-    return successResponse(payment, `Payment ${status} successfully`);
+    return successResponse(response, message);
   } catch (error) {
     return handleApiError(error);
   }
