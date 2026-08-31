@@ -1,5 +1,6 @@
 import { auth } from './auth';
 import { SessionUser } from '@/types/api';
+import { AuthenticationError, AuthorizationError } from './error-handler';
 
 export async function getSessionUser(): Promise<SessionUser | null> {
   try {
@@ -20,7 +21,7 @@ export async function requireAuth(): Promise<SessionUser> {
   const user = await getSessionUser();
   
   if (!user) {
-    throw new Error('Unauthorized: Authentication required');
+    throw new AuthenticationError('Authentication required. Please sign in.');
   }
 
   return user;
@@ -30,7 +31,7 @@ export async function requireAdmin(): Promise<SessionUser> {
   const user = await requireAuth();
   
   if (user.role !== 'admin') {
-    throw new Error('Forbidden: Admin access required');
+    throw new AuthorizationError('Admin access required');
   }
 
   return user;
@@ -40,7 +41,7 @@ export async function requireCustomer(): Promise<SessionUser> {
   const user = await requireAuth();
   
   if (user.role !== 'customer' && user.role !== 'admin') {
-    throw new Error('Forbidden: Customer access required');
+    throw new AuthorizationError('Customer access required');
   }
 
   return user;
@@ -52,4 +53,25 @@ export function isAdmin(user: SessionUser | null): boolean {
 
 export function isAuthenticated(user: SessionUser | null): boolean {
   return !!user;
+}
+
+// Helper to check if user has access to a resource
+export function canAccessUserResource(
+  currentUser: SessionUser,
+  resourceUserId: string
+): boolean {
+  return currentUser.role === 'admin' || currentUser.id === resourceUserId;
+}
+
+// Helper to get user ID safely
+export function getUserId(user: SessionUser | null): string | null {
+  return user?.id || null;
+}
+
+// Helper to check if user is active (not suspended or deleted)
+export function isActiveUser(user: SessionUser | null): boolean {
+  if (!user) return false;
+  
+  const accountStatus = (user as any).accountStatus;
+  return accountStatus === 'active' || accountStatus === undefined;
 }
