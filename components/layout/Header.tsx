@@ -5,6 +5,8 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { useCart } from '@/lib/cart-context';
+import { useWishlist } from '@/lib/wishlist-context';
 import { cn } from '@/lib/utils';
 import {
   Search,
@@ -28,6 +30,8 @@ export default function Header() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const { user, isAuthenticated, isAdmin, loading } = useAuth();
+  const { itemCount: cartCount } = useCart();
+  const { itemCount: wishlistCount } = useWishlist();
   const pathname = usePathname();
 
   useEffect(() => {
@@ -38,9 +42,6 @@ export default function Header() {
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
-
-  const cartItemCount = 3; // TODO: Get from cart context
-  const wishlistCount = 2; // TODO: Get from wishlist context
 
   return (
     <>
@@ -165,17 +166,15 @@ export default function Header() {
                 aria-label="Cart"
               >
                 <ShoppingCart className="h-5 w-5" />
-                {cartItemCount > 0 && (
+                {cartCount > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-primary-600 text-white text-xs rounded-full flex items-center justify-center">
-                    {cartItemCount}
+                    {cartCount}
                   </span>
                 )}
               </Link>
 
               {/* User Menu */}
-              {!loading && (
-                <UserMenu />
-              )}
+              {!loading && <UserMenu />}
             </div>
           </div>
         </div>

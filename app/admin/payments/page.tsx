@@ -8,9 +8,8 @@ import {
   XCircle,
   Smartphone,
 } from 'lucide-react';
-import { paymentAPI, adminAPI } from '@/lib/api';
+import { paymentAPI } from '@/lib/api';
 import { formatPrice, formatDateTime } from '@/lib/utils';
-import Badge from '@/components/ui/Badge';
 import StatusBadge from '@/components/ui/StatusBadge';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
@@ -23,31 +22,45 @@ export default function AdminPaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 20,
+    total: 0,
+    totalPages: 0,
+  });
   const [selectedPayment, setSelectedPayment] = useState<any>(null);
   const [actionType, setActionType] = useState<'verify' | 'reject' | null>(null);
   const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
-    fetchPayments();
+    fetchPayments(1);
   }, [search, statusFilter]);
 
-  const fetchPayments = async () => {
+  const fetchPayments = async (page: number) => {
     setLoading(true);
     try {
-      // Note: This would need a dedicated payments list endpoint
-      // For now, we'll use the orders endpoint to get payment info
-      const response = await adminAPI.getUsers({ search, limit: 100 });
-      // This is a placeholder - actual implementation would fetch payments
-      setPayments([]);
+      const params: any = { page, limit: 20 };
+      if (search) params.search = search;
+      if (statusFilter) params.status = statusFilter;
+
+      const response = await paymentAPI.getPayments(params);
+      setPayments(response.data || []);
+      setPagination(response.pagination || {
+        page: 1,
+        limit: 20,
+        total: 0,
+        totalPages: 0,
+      });
     } catch (error) {
       console.error('Error fetching payments:', error);
+      toast.error('Failed to fetch payments');
       setPayments([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleVerifyPayment = async () => {
+  const handlePaymentAction = async () => {
     if (!selectedPayment) return;
 
     setProcessing(true);
@@ -62,7 +75,7 @@ export default function AdminPaymentsPage() {
       );
       setSelectedPayment(null);
       setActionType(null);
-      fetchPayments();
+      fetchPayments(pagination.page);
     } catch (error: any) {
       toast.error(error.message || 'Failed to process payment');
     } finally {
@@ -70,9 +83,13 @@ export default function AdminPaymentsPage() {
     }
   };
 
-  const pendingPayments = payments.filter((p) => p.status === 'pending');
-  const verifiedPayments = payments.filter((p) => p.status === 'verified');
-  const rejectedPayments = payments.filter((p) => p.status === 'rejected');
+  const handlePageChange = (page: number) => {
+    fetchPayments(page);
+  };
+
+  const pendingCount = payments.filter((p) => p.status === 'pending').length;
+  const verifiedCount = payments.filter((p) => p.status === 'verified').length;
+  const rejectedCount = payments.filter((p) => p.status === 'rejected').length;
 
   return (
     <div className="space-y-6">
@@ -86,25 +103,52 @@ export default function AdminPaymentsPage() {
         </p>
       </div>
 
-      {/* Stats */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
-          <p className="text-2xl font-bold text-amber-800">
-            {pendingPayments.length}
-          </p>
-          <p className="text-sm text-amber-600">Pending Verification</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-2xl font-bold text-amber-800">
+                {pendingCount}
+              </p>
+              <p className="text-sm text-amber-600 mt-1">
+                Pending Verification
+              </p>
+            </div>
+            <div className="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center">
+              <CreditCard className="h-6 w-6 text-amber-600" />
+            </div>
+          </div>
         </div>
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-6">
-          <p className="text-2xl font-bold text-emerald-800">
-            {verifiedPayments.length}
-          </p>
-          <p className="text-sm text-emerald-600">Verified</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-2xl font-bold text-emerald-800">
+                {verifiedCount}
+              </p>
+              <p className="text-sm text-emerald-600 mt-1">
+                Verified Payments
+              </p>
+            </div>
+            <div className="w-12 h-12 bg-emerald-100 rounded-lg flex items-center justify-center">
+              <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+            </div>
+          </div>
         </div>
         <div className="bg-red-50 border border-red-200 rounded-xl p-6">
-          <p className="text-2xl font-bold text-red-800">
-            {rejectedPayments.length}
-          </p>
-          <p className="text-sm text-red-600">Rejected</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-2xl font-bold text-red-800">
+                {rejectedCount}
+              </p>
+              <p className="text-sm text-red-600 mt-1">
+                Rejected Payments
+              </p>
+            </div>
+            <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
+              <XCircle className="h-6 w-6 text-red-600" />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -205,7 +249,7 @@ export default function AdminPaymentsPage() {
                       {formatDateTime(payment.createdAt)}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      {payment.status === 'pending' && (
+                      {payment.status === 'pending' ? (
                         <div className="flex items-center justify-end gap-2">
                           <Button
                             onClick={() => {
@@ -230,6 +274,15 @@ export default function AdminPaymentsPage() {
                             Reject
                           </Button>
                         </div>
+                      ) : (
+                        <span className="text-xs text-neutral-400">
+                          {payment.status === 'verified' ? 'Verified' : 'Rejected'}
+                          {payment.verifiedAt && (
+                            <span className="block">
+                              {formatDateTime(payment.verifiedAt)}
+                            </span>
+                          )}
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -241,10 +294,24 @@ export default function AdminPaymentsPage() {
           {payments.length === 0 && (
             <div className="py-12 text-center">
               <CreditCard className="h-12 w-12 text-neutral-300 mx-auto mb-4" />
-              <p className="text-neutral-500">No payments found</p>
+              <p className="text-neutral-500 mb-1">No payments found</p>
+              <p className="text-sm text-neutral-400">
+                {statusFilter
+                  ? `No ${statusFilter} payments found`
+                  : 'All customer payments will appear here'}
+              </p>
             </div>
           )}
         </div>
+      )}
+
+      {/* Pagination */}
+      {pagination.totalPages > 1 && (
+        <Pagination
+          currentPage={pagination.page}
+          totalPages={pagination.totalPages}
+          onPageChange={handlePageChange}
+        />
       )}
 
       {/* Verify/Reject Modal */}
@@ -258,7 +325,7 @@ export default function AdminPaymentsPage() {
         size="sm"
       >
         <div className="space-y-4">
-          <div className="bg-neutral-50 rounded-lg p-4 space-y-2">
+          <div className="bg-neutral-50 rounded-lg p-4 space-y-3">
             <div className="flex justify-between">
               <span className="text-sm text-neutral-600">Transaction ID:</span>
               <span className="text-sm font-medium text-neutral-900">
@@ -277,26 +344,46 @@ export default function AdminPaymentsPage() {
                 {selectedPayment?.phoneNumber}
               </span>
             </div>
+            <div className="flex justify-between">
+              <span className="text-sm text-neutral-600">Method:</span>
+              <span className="text-sm font-medium text-neutral-900 uppercase">
+                {selectedPayment?.method}
+              </span>
+            </div>
           </div>
 
           {actionType === 'verify' ? (
-            <p className="text-sm text-neutral-600">
-              Have you confirmed that the money has been received?
-            </p>
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+              <p className="text-sm text-emerald-800">
+                Have you confirmed that the money has been received?
+              </p>
+            </div>
           ) : (
-            <p className="text-sm text-neutral-600">
-              Are you sure you want to reject this payment?
-            </p>
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-sm text-red-800">
+                Are you sure you want to reject this payment? The customer will be notified.
+              </p>
+            </div>
           )}
 
           <div className="flex gap-3">
             <Button
-              onClick={handleVerifyPayment}
+              onClick={handlePaymentAction}
               loading={processing}
               variant={actionType === 'verify' ? 'success' : 'danger'}
               fullWidth
             >
-              {actionType === 'verify' ? 'Confirm Verification' : 'Reject Payment'}
+              {actionType === 'verify' ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4" />
+                  Confirm Verification
+                </>
+              ) : (
+                <>
+                  <XCircle className="h-4 w-4" />
+                  Reject Payment
+                </>
+              )}
             </Button>
             <Button
               onClick={() => {
