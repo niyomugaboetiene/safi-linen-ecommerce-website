@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/dynamodb';
-import Settings from '@/models/Settings';
-import { requireAuth, requireAdmin } from '@/lib/auth-utils';
+import { settingsRepository } from '@/lib/dynamodb/repositories/settingsRepository';
+import { requireAdmin } from '@/lib/auth-utils';
 import { successResponse, errorResponse } from '@/lib/api-response';
 import { handleApiError } from '@/lib/error-handler';
 import { z } from 'zod';
@@ -33,16 +32,17 @@ const settingsSchema = z.object({
 
 export async function GET(req: NextRequest) {
   try {
-    await connectDB();
+    const settings = await settingsRepository.getSettings();
 
-    let settings = await Settings.findOne().select('-__v');
+    const response = {
+      business: settings.business,
+      delivery: settings.delivery,
+      payment: settings.payment,
+      site: settings.site,
+      updatedAt: settings.updatedAt,
+    };
 
-    if (!settings) {
-      // Create default settings if not exists
-      settings = await Settings.create({});
-    }
-
-    return successResponse(settings, 'Settings fetched successfully');
+    return successResponse(response, 'Settings fetched successfully');
   } catch (error) {
     return handleApiError(error);
   }
@@ -65,19 +65,18 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    await connectDB();
+    // Update settings
+    const settings = await settingsRepository.updateAllSettings(validatedData.data);
 
-    let settings = await Settings.findOne();
+    const response = {
+      business: settings.business,
+      delivery: settings.delivery,
+      payment: settings.payment,
+      site: settings.site,
+      updatedAt: settings.updatedAt,
+    };
 
-    if (!settings) {
-      settings = await Settings.create(validatedData.data);
-    } else {
-      // Update only provided fields
-      Object.assign(settings, validatedData.data);
-      await settings.save();
-    }
-
-    return successResponse(settings, 'Settings updated successfully');
+    return successResponse(response, 'Settings updated successfully');
   } catch (error) {
     return handleApiError(error);
   }

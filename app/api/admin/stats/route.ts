@@ -1,10 +1,9 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/dynamodb';
-import User from '@/models/User';
-import Product from '@/models/Product';
-import Order from '@/models/Order';
-import Payment from '@/models/Payment';
-import Review from '@/models/Review';
+import { userRepository } from '@/lib/dynamodb/repositories/userRepository';
+import { productRepository } from '@/lib/dynamodb/repositories/productRepository';
+import { orderRepository } from '@/lib/dynamodb/repositories/orderRepository';
+import { paymentRepository } from '@/lib/dynamodb/repositories/paymentRepository';
+import { reviewRepository } from '@/lib/dynamodb/repositories/reviewRepository';
 import { requireAdmin } from '@/lib/auth-utils';
 import { successResponse, errorResponse } from '@/lib/api-response';
 import { handleApiError } from '@/lib/error-handler';
@@ -13,8 +12,7 @@ export async function GET(req: NextRequest) {
   try {
     await requireAdmin();
 
-    await connectDB();
-
+    // Fetch all stats in parallel
     const [
       totalUsers,
       totalProducts,
@@ -25,37 +23,49 @@ export async function GET(req: NextRequest) {
       recentOrders,
       lowStockProducts,
     ] = await Promise.all([
-      User.countDocuments({ accountStatus: 'active' }),
-      Product.countDocuments({ active: true }),
-      Order.countDocuments(),
-      Payment.aggregate([
-        { $match: { status: 'verified' } },
-        { $group: { _id: null, total: { $sum: '$amount' } } },
-      ]),
-      Payment.countDocuments({ status: 'pending' }),
-      Review.countDocuments(),
-      Order.find()
-        .sort({ createdAt: -1 })
-        .limit(10)
-        .select('orderNumber total status createdAt')
-        .populate('user', 'name email'),
-      Product.find({
-        'variants.stock': { $lte: 10 },
-        active: true,
-      })
-        .select('name variants.name variants.stock')
-        .limit(10),
+      userRepository.countUsers(),
+      productRepository.countProducts(),
+      orderRepository.countOrders(),
+      paymentRepository.getTotalRevenue(),
+      paymentRepository.countPendingPayments(),
+      reviewRepository.countReviews(),
+      orderRepository.listAllOrders({ limit: 10 }),
+      productRepository.getLowStockProducts(10, 10),
     ]);
+
+    // Format recent orders for frontend
+    const formattedRecentOrders = recentOrders.data.map(order => ({
+      id: order.id,
+      orderNumber: order.orderNumber,
+      total: order.total,
+      status: order.status,
+      createdAt: order.createdAt,
+    }));
+
+    // Format low stock products for frontend
+    const formattedLowStockProducts = lowStockProducts.map(product => ({
+      id: product.id,
+      name: product.name,
+      variants: product.variants
+        .filter(v => v.stock <= 10)
+        .map(v => ({
+          id: v.variantId,
+          sku: v.sku,
+          color: v.color,
+          size: v.size,
+          stock: v.stock,
+        })),
+    }));
 
     const stats = {
       totalUsers,
       totalProducts,
       totalOrders,
-      totalRevenue: totalRevenue[0]?.total || 0,
+      totalRevenue,
       pendingPayments,
       totalReviews,
-      recentOrders,
-      lowStockProducts,
+      recentOrders: formattedRecentOrders,
+      lowStockProducts: formattedLowStockProducts,
     };
 
     return successResponse(stats, 'Admin stats fetched successfully');

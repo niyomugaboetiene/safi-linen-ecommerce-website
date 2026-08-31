@@ -1,46 +1,54 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/dynamodb';
-import Review from '@/models/Review';
-import Product from '@/models/Product';
-import Order from '@/models/Order';
+import { reviewRepository } from '@/lib/dynamodb/repositories/reviewRepository';
+import { productRepository } from '@/lib/dynamodb/repositories/productRepository';
+import { orderRepository } from '@/lib/dynamodb/repositories/orderRepository';
 import { requireAuth } from '@/lib/auth-utils';
 import { createReviewSchema } from '@/validators/review';
 import { successResponse, errorResponse, paginatedResponse } from '@/lib/api-response';
-import { parsePaginationParams, createPaginationInfo } from '@/lib/api-response';
 import { handleApiError } from '@/lib/error-handler';
 
 export async function GET(req: NextRequest) {
   try {
+    const sessionUser = await requireAuth();
+
     const { searchParams } = new URL(req.url);
-    const { page, limit, skip } = parsePaginationParams(searchParams);
     
-    const productId = searchParams.get('productId');
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '20');
+    const productId = searchParams.get('productId') || undefined;
 
-    await connectDB();
+    let result;
 
-    const query: any = {};
-    
     if (productId) {
-      if (!productId.match(/^[0-9a-fA-F]{24}$/)) {
-        return errorResponse('Invalid product ID', 400);
+      // Validate product ID format
+      if (!productId.startsWith('PROD_')) {
+        return errorResponse('Invalid product ID format', 400);
       }
-      query.product = productId;
+
+      // Get reviews for a specific product
+      result = await reviewRepository.getProductReviews(productId, {
+        page,
+        limit,
+      });
+    } else if (sessionUser.role === 'admin') {
+      // Admin can see all reviews
+      result = await reviewRepository.listAllReviews({
+        page,
+        limit,
+      });
+    } else {
+      // Regular user sees their own reviews
+      result = await reviewRepository.getUserReviews(sessionUser.id, {
+        page,
+        limit,
+      });
     }
 
-    const [reviews, total] = await Promise.all([
-      Review.find(query)
-        .populate('user', 'name email profileImage')
-        .populate('product', 'name slug')
-        .select('-__v')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      Review.countDocuments(query),
-    ]);
-
-    const pagination = createPaginationInfo(page, limit, total);
-
-    return paginatedResponse(reviews, pagination, 'Reviews fetched successfully');
+    return paginatedResponse(
+      result.data,
+      result.pagination,
+      'Reviews fetched successfully'
+    );
   } catch (error) {
     return handleApiError(error);
   }
@@ -65,44 +73,57 @@ export async function POST(req: NextRequest) {
 
     const { productId, rating, comment } = validatedData.data;
 
-    await connectDB();
-
     // Check if product exists
-    const product = await Product.findById(productId);
+    const product = await productRepository.getProductById(productId);
 
     if (!product) {
       return errorResponse('Product not found', 404);
     }
 
-    // Check if user has purchased the product
-    const hasPurchased = await Order.exists({
-      user: sessionUser.id,
-      'items.product': productId,
-      status: { $in: ['paid', 'processing', 'shipped', 'delivered'] },
-    });
+    // Check if user has purchased the product (admin can review without purchase)
+    if (sessionUser.role !== 'admin') {
+      const userOrders = await orderRepository.getUserOrders(sessionUser.id, {
+        limit: 100,
+      });
 
-    if (!hasPurchased && sessionUser.role !== 'admin') {
-      return errorResponse('You can only review products you have purchased', 403);
+      const hasPurchased = userOrders.data.some(order => 
+        order.items.some(item => item.productId === productId) &&
+        ['paid', 'processing', 'shipped', 'delivered'].includes(order.status)
+      );
+
+      if (!hasPurchased) {
+        return errorResponse('You can only review products you have purchased', 403);
+      }
     }
 
     // Check if user has already reviewed this product
-    const existingReview = await Review.findOne({
-      user: sessionUser.id,
-      product: productId,
-    });
+    const existingReview = await reviewRepository.getReviewByUserAndProduct(
+      sessionUser.id,
+      productId
+    );
 
     if (existingReview) {
       return errorResponse('You have already reviewed this product', 409);
     }
 
-    const review = await Review.create({
-      user: sessionUser.id,
-      product: productId,
+    const review = await reviewRepository.createReview({
+      userId: sessionUser.id,
+      productId,
       rating,
       comment,
     });
 
-    return successResponse(review, 'Review created successfully', 201);
+    const response = {
+      id: review.reviewId,
+      userId: review.userId,
+      productId: review.productId,
+      rating: review.rating,
+      comment: review.comment,
+      createdAt: review.createdAt,
+      updatedAt: review.updatedAt,
+    };
+
+    return successResponse(response, 'Review created successfully', 201);
   } catch (error) {
     return handleApiError(error);
   }
