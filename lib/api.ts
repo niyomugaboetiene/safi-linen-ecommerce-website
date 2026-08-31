@@ -1,37 +1,74 @@
+'use client';
+
 import { getSession } from 'next-auth/react';
 
 const API_BASE_URL = '/api';
 
+interface FetchOptions extends RequestInit {
+  isFormData?: boolean;
+}
+
 async function fetchAPI(
   endpoint: string,
-  options: RequestInit = {}
+  options: FetchOptions = {}
 ) {
   const session = await getSession();
   
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
+  const headers: HeadersInit = {};
+  
+  // Don't set Content-Type for FormData (browser will set it with boundary)
+  if (!options.isFormData) {
+    headers['Content-Type'] = 'application/json';
+  }
 
+  // Add authentication if session exists
   if (session?.user) {
-    headers.Authorization = `Bearer ${session.user.id}`;
+    // NextAuth JWT sessions don't need Authorization header
+    // The session cookie is automatically sent
+    // We'll keep this for backward compatibility
+    headers['X-User-Id'] = session.user.id;
   }
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
-    headers,
+    headers: {
+      ...headers,
+      ...options.headers,
+    },
+    credentials: 'include', // Important for session cookies
   });
 
-  const data = await response.json();
+  // Handle non-JSON responses
+  const contentType = response.headers.get('content-type');
+  let data;
+  
+  if (contentType && contentType.includes('application/json')) {
+    data = await response.json();
+  } else {
+    data = await response.text();
+  }
 
   if (!response.ok) {
-    throw new Error(data.message || 'Something went wrong');
+    // Handle different error status codes
+    if (response.status === 401) {
+      // Redirect to login if unauthorized
+      window.location.href = '/login';
+      throw new Error('Please sign in to continue');
+    } else if (response.status === 403) {
+      throw new Error('You do not have permission to perform this action');
+    } else if (response.status === 404) {
+      throw new Error(data.message || 'Resource not found');
+    } else if (response.status === 422) {
+      throw new Error(data.message || 'Validation error');
+    } else {
+      throw new Error(data.message || 'Something went wrong');
+    }
   }
 
   return data;
 }
 
-// Auth API
+// Auth API - Updated to use NextAuth directly
 export const authAPI = {
   register: (data: any) =>
     fetchAPI('/auth/register', {
@@ -39,11 +76,8 @@ export const authAPI = {
       body: JSON.stringify(data),
     }),
   
-  login: (data: any) =>
-    fetchAPI('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+  // Login is handled by NextAuth signIn() directly
+  // No need for a separate API call
   
   logout: () =>
     fetchAPI('/auth/logout', {
@@ -66,13 +100,22 @@ export const userAPI = {
     fetchAPI('/users/profile', {
       method: 'DELETE',
     }),
+  
+  changePassword: (data: any) =>
+    fetchAPI('/users/change-password', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
 };
 
 // Product API
 export const productAPI = {
   getProducts: (params?: any) => {
-    const queryString = new URLSearchParams(params).toString();
-    return fetchAPI(`/products?${queryString}`);
+    const filteredParams = Object.fromEntries(
+      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
+    );
+    const queryString = new URLSearchParams(filteredParams).toString();
+    return fetchAPI(`/products${queryString ? `?${queryString}` : ''}`);
   },
   
   getProduct: (id: string) =>
@@ -103,6 +146,9 @@ export const categoryAPI = {
     return fetchAPI(`/categories${params}`);
   },
   
+  getCategory: (id: string) =>
+    fetchAPI(`/categories/${id}`),
+  
   createCategory: (data: any) =>
     fetchAPI('/categories', {
       method: 'POST',
@@ -126,7 +172,7 @@ export const cartAPI = {
   getCart: () =>
     fetchAPI('/cart'),
   
-  addToCart: (data: any) =>
+  addToCart: (data: { productId: string; variantId: string; quantity: number }) =>
     fetchAPI('/cart', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -158,8 +204,11 @@ export const orderAPI = {
     }),
   
   getOrders: (params?: any) => {
-    const queryString = new URLSearchParams(params).toString();
-    return fetchAPI(`/orders?${queryString}`);
+    const filteredParams = Object.fromEntries(
+      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
+    );
+    const queryString = new URLSearchParams(filteredParams).toString();
+    return fetchAPI(`/orders${queryString ? `?${queryString}` : ''}`);
   },
   
   getOrder: (id: string) =>
@@ -180,6 +229,14 @@ export const paymentAPI = {
       body: JSON.stringify(data),
     }),
   
+  getPayments: (params?: any) => {
+    const filteredParams = Object.fromEntries(
+      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
+    );
+    const queryString = new URLSearchParams(filteredParams).toString();
+    return fetchAPI(`/payments${queryString ? `?${queryString}` : ''}`);
+  },
+  
   verifyPayment: (id: string, data: any) =>
     fetchAPI(`/payments/${id}/verify`, {
       method: 'PUT',
@@ -190,8 +247,11 @@ export const paymentAPI = {
 // Review API
 export const reviewAPI = {
   getReviews: (params?: any) => {
-    const queryString = new URLSearchParams(params).toString();
-    return fetchAPI(`/reviews?${queryString}`);
+    const filteredParams = Object.fromEntries(
+      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
+    );
+    const queryString = new URLSearchParams(filteredParams).toString();
+    return fetchAPI(`/reviews${queryString ? `?${queryString}` : ''}`);
   },
   
   createReview: (data: any) =>
@@ -248,9 +308,15 @@ export const adminAPI = {
     fetchAPI('/admin/stats'),
   
   getUsers: (params?: any) => {
-    const queryString = new URLSearchParams(params).toString();
-    return fetchAPI(`/users?${queryString}`);
+    const filteredParams = Object.fromEntries(
+      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
+    );
+    const queryString = new URLSearchParams(filteredParams).toString();
+    return fetchAPI(`/users${queryString ? `?${queryString}` : ''}`);
   },
+  
+  getUser: (id: string) =>
+    fetchAPI(`/admin/users/${id}`),
   
   updateUser: (id: string, data: any) =>
     fetchAPI(`/admin/users/${id}`, {
@@ -266,17 +332,14 @@ export const adminAPI = {
 
 // Upload API
 export const uploadAPI = {
-  uploadImage: (file: File) => {
+  uploadImage: async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
     
     return fetchAPI('/upload', {
       method: 'POST',
       body: formData,
-      headers: {
-        // Don't set Content-Type for FormData
-        'Content-Type': undefined,
-      },
+      isFormData: true,
     });
   },
 };
