@@ -1,6 +1,6 @@
-# E-Commerce Backend
+# SAFI LIEN ECOMERCE WEBSITE
 
-A secure, scalable backend for an e-commerce platform built with Next.js, MongoDB Atlas, and Cloudinary.
+A secure, scalable website for an e-commerce platform built with Next.js, MongoDB Atlas, and Cloudinary.
 
 ## Tech Stack
 
