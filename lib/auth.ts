@@ -1,8 +1,7 @@
 import NextAuth, { NextAuthOptions } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import connectDB from './dynamodb';
-import User from '@/models/User';
+import { userRepository } from '@/lib/dynamodb/repositories/userRepository';
 
 if (!process.env.GOOGLE_CLIENT_ID) {
   throw new Error('Please define the GOOGLE_CLIENT_ID environment variable');
@@ -36,29 +35,29 @@ export const authOptions: NextAuthOptions = {
           throw new Error('Email and password are required');
         }
 
-        await connectDB();
-
-        const user = await User.findOne({
-          email: credentials.email.toLowerCase(),
-          accountStatus: 'active',
-        }).select('+password');
+        const user = await userRepository.getUserByEmail(credentials.email);
 
         if (!user) {
           throw new Error('Invalid email or password');
+        }
+
+        if (user.accountStatus !== 'active') {
+          throw new Error('Account is not active. Please contact support.');
         }
 
         if (!user.password) {
           throw new Error('This account uses Google authentication. Please sign in with Google.');
         }
 
-        const isPasswordValid = await user.comparePassword(credentials.password);
+        const bcrypt = require('bcryptjs');
+        const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
 
         if (!isPasswordValid) {
           throw new Error('Invalid email or password');
         }
 
         return {
-          id: user._id.toString(),
+          id: user.userId,
           name: user.name,
           email: user.email,
           role: user.role,
@@ -75,33 +74,23 @@ export const authOptions: NextAuthOptions = {
     async signIn({ user, account }) {
       if (account?.provider === 'google') {
         try {
-          await connectDB();
-
-          const existingUser = await User.findOne({
-            $or: [
-              { email: user.email?.toLowerCase() },
-              { googleId: account.providerAccountId },
-            ],
-          });
+          const existingUser = await userRepository.getUserByEmail(user.email || '');
 
           if (!existingUser) {
             // Create new user with Google info
-            await User.create({
-              name: user.name,
-              email: user.email?.toLowerCase(),
+            await userRepository.createUser({
+              name: user.name || 'Google User',
+              email: user.email || '',
               profileImage: user.image,
               googleId: account.providerAccountId,
               role: 'customer',
-              accountStatus: 'active',
             });
           } else {
             // Update existing user with Google info if needed
             if (!existingUser.googleId) {
-              existingUser.googleId = account.providerAccountId;
-              if (!existingUser.profileImage && user.image) {
-                existingUser.profileImage = user.image;
-              }
-              await existingUser.save();
+              await userRepository.updateUser(existingUser.userId, {
+                profileImage: existingUser.profileImage || user.image || '',
+              });
             }
           }
 
@@ -122,10 +111,9 @@ export const authOptions: NextAuthOptions = {
       // If it's a Google sign-in, get the user from database
       if (account?.provider === 'google') {
         try {
-          await connectDB();
-          const dbUser = await User.findOne({ email: token.email?.toLowerCase() });
+          const dbUser = await userRepository.getUserByEmail(token.email || '');
           if (dbUser) {
-            token.id = dbUser._id.toString();
+            token.id = dbUser.userId;
             token.role = dbUser.role;
           }
         } catch (error) {
