@@ -1,11 +1,10 @@
 # SAFI LIEN ECOMERCE WEBSITE
 
 A secure, scalable website for an e-commerce platform built with Next.js, MongoDB Atlas, and Cloudinary.
-
 ## Tech Stack
 
 - **Framework**: Next.js 14 (App Router)
-- **Database**: MongoDB Atlas with Mongoose
+- **Database**: Amazon DynamoDB (AWS SDK v3)
 - **Authentication**: NextAuth.js (Google OAuth + Credentials)
 - **Image Storage**: Cloudinary
 - **Validation**: Zod
@@ -25,18 +24,23 @@ A secure, scalable website for an e-commerce platform built with Next.js, MongoD
 - ⚙️ Configurable settings
 - 📸 Image upload with Cloudinary
 
-## Setup Instructions
-
-### Prerequisites
+## Prerequisites
 
 - Node.js 18+
-- MongoDB Atlas account
+- AWS Account with DynamoDB access
 - Cloudinary account
 - Google Cloud Console (for OAuth)
 
-### Installation
+## DynamoDB Setup
 
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   npm install
+### 1. Create DynamoDB Table
+
+The application uses a single DynamoDB table with Global Secondary Indexes.
+
+```bash
+# Set up environment variables first
+cp .env.example .env.local
+# Fill in AWS credentials and other variables
+
+# Create the table
+npx ts-node scripts/create-dynamodb-table.ts
