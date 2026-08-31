@@ -1,26 +1,24 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/dynamodb';
-import Product from '@/models/Product';
-import { requireAdmin, requireAuth } from '@/lib/auth-utils';
+import { productRepository } from '@/lib/dynamodb/repositories/productRepository';
+import { categoryRepository } from '@/lib/dynamodb/repositories/categoryRepository';
+import { requireAdmin } from '@/lib/auth-utils';
 import { createProductSchema, productQuerySchema } from '@/validators/product';
 import { paginatedResponse, errorResponse, successResponse } from '@/lib/api-response';
-import { parsePaginationParams, createPaginationInfo } from '@/lib/api-response';
 import { handleApiError } from '@/lib/error-handler';
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const { page, limit, skip } = parsePaginationParams(searchParams);
     
     // Parse query parameters
     const queryParams = {
-      page,
-      limit,
+      page: parseInt(searchParams.get('page') || '1'),
+      limit: parseInt(searchParams.get('limit') || '20'),
       category: searchParams.get('category') || undefined,
       search: searchParams.get('search') || undefined,
       featured: searchParams.get('featured') || undefined,
       active: searchParams.get('active') || undefined,
-      sort: searchParams.get('sort') || 'newest',
+      sort: (searchParams.get('sort') || 'newest') as any,
     };
 
     const validatedQuery = productQuerySchema.safeParse(queryParams);
@@ -33,64 +31,13 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    await connectDB();
+    const result = await productRepository.listProducts(validatedQuery.data);
 
-    // Build query
-    const query: any = {};
-    
-    if (validatedQuery.data.category) {
-      query.category = validatedQuery.data.category;
-    }
-    
-    if (validatedQuery.data.search) {
-      query.$or = [
-        { name: { $regex: validatedQuery.data.search, $options: 'i' } },
-        { description: { $regex: validatedQuery.data.search, $options: 'i' } },
-        { brand: { $regex: validatedQuery.data.search, $options: 'i' } },
-      ];
-    }
-    
-    if (validatedQuery.data.featured) {
-      query.featured = validatedQuery.data.featured === 'true';
-    }
-    
-    if (validatedQuery.data.active) {
-      query.active = validatedQuery.data.active === 'true';
-    }
-
-    // Build sort
-    let sortOption: any = { createdAt: -1 };
-    switch (validatedQuery.data.sort) {
-      case 'oldest':
-        sortOption = { createdAt: 1 };
-        break;
-      case 'price_asc':
-        sortOption = { 'variants.price': 1 };
-        break;
-      case 'price_desc':
-        sortOption = { 'variants.price': -1 };
-        break;
-      case 'name_asc':
-        sortOption = { name: 1 };
-        break;
-      case 'name_desc':
-        sortOption = { name: -1 };
-        break;
-    }
-
-    const [products, total] = await Promise.all([
-      Product.find(query)
-        .populate('category', 'name slug')
-        .select('-__v')
-        .sort(sortOption)
-        .skip(skip)
-        .limit(limit),
-      Product.countDocuments(query),
-    ]);
-
-    const pagination = createPaginationInfo(page, limit, total);
-
-    return paginatedResponse(products, pagination, 'Products fetched successfully');
+    return paginatedResponse(
+      result.data,
+      result.pagination,
+      'Products fetched successfully'
+    );
   } catch (error) {
     return handleApiError(error);
   }
@@ -113,26 +60,46 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await connectDB();
+    const { name, description, category, brand, variants, featured, active } = validatedData.data;
 
-    // Check for duplicate SKUs
-    const skus = validatedData.data.variants.map(v => v.sku);
-    const existingProducts = await Product.find({
-      'variants.sku': { $in: skus },
-    });
-
-    if (existingProducts.length > 0) {
-      const existingSkus = existingProducts.flatMap(p => 
-        p.variants.map(v => v.sku)
-      );
-      return errorResponse(
-        `SKUs already exist: ${existingSkus.join(', ')}`,
-        409,
-        'Duplicate SKU'
-      );
+    // Check if category exists
+    const categoryExists = await categoryRepository.getCategoryById(category);
+    
+    if (!categoryExists) {
+      return errorResponse('Category not found', 404);
     }
 
-    const product = await Product.create(validatedData.data);
+    // Check for duplicate SKUs
+    for (const variant of variants) {
+      const skuExists = await productRepository.checkSkuExists(variant.sku);
+      if (skuExists) {
+        return errorResponse(
+          `SKU already exists: ${variant.sku}`,
+          409,
+          'Duplicate SKU'
+        );
+      }
+    }
+
+    const product = await productRepository.createProduct({
+      name,
+      description,
+      categoryId: category,
+      categoryName: categoryExists.name,
+      brand: brand || undefined,
+      featured,
+      active,
+      variants: variants.map((v: any) => ({
+        sku: v.sku,
+        color: v.color || undefined,
+        size: v.size || undefined,
+        price: v.price,
+        stock: v.stock,
+        images: v.images || [],
+        attributes: v.attributes,
+        active: v.active,
+      })),
+    });
 
     return successResponse(product, 'Product created successfully', 201);
   } catch (error) {

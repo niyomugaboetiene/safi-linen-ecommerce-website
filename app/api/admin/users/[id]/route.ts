@@ -1,6 +1,5 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/dynamodb';
-import User from '@/models/User';
+import { userRepository } from '@/lib/dynamodb/repositories/userRepository';
 import { requireAdmin } from '@/lib/auth-utils';
 import { adminUpdateUserSchema } from '@/validators/user';
 import { successResponse, errorResponse } from '@/lib/api-response';
@@ -15,10 +14,7 @@ export async function GET(
 
     const { id } = params;
 
-    await connectDB();
-
-    const user = await User.findById(id)
-      .select('-password -googleId -__v');
+    const user = await userRepository.getUserProfile(id);
 
     if (!user) {
       return errorResponse('User not found', 404);
@@ -35,7 +31,7 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   try {
-    await requireAdmin();
+    const sessionUser = await requireAdmin();
 
     const { id } = params;
     const body = await req.json();
@@ -51,9 +47,7 @@ export async function PUT(
       );
     }
 
-    await connectDB();
-
-    const user = await User.findById(id);
+    const user = await userRepository.getUserById(id);
 
     if (!user) {
       return errorResponse('User not found', 404);
@@ -61,21 +55,48 @@ export async function PUT(
 
     // Check for duplicate email
     if (validatedData.data.email && validatedData.data.email !== user.email) {
-      const existingUser = await User.findOne({ 
-        email: validatedData.data.email,
-        _id: { $ne: id },
-      });
+      const existingUser = await userRepository.getUserByEmail(validatedData.data.email);
       
-      if (existingUser) {
+      if (existingUser && existingUser.userId !== id) {
         return errorResponse('Email already exists', 409);
       }
     }
 
-    // Update fields
-    Object.assign(user, validatedData.data);
-    await user.save();
+    // Update user fields
+    const updates: any = {};
+    
+    if (validatedData.data.name) updates.name = validatedData.data.name;
+    if (validatedData.data.email) updates.email = validatedData.data.email;
+    if (validatedData.data.phone !== undefined) updates.phone = validatedData.data.phone || undefined;
+    if (validatedData.data.city !== undefined) updates.city = validatedData.data.city || undefined;
+    if (validatedData.data.district !== undefined) updates.district = validatedData.data.district || undefined;
 
-    return successResponse(user, 'User updated successfully');
+    // Handle role update separately
+    if (validatedData.data.role && validatedData.data.role !== user.role) {
+      // Prevent removing own admin role
+      if (id === sessionUser.id && validatedData.data.role !== 'admin') {
+        return errorResponse('Cannot remove your own admin role', 400);
+      }
+      await userRepository.updateUserRole(id, validatedData.data.role);
+    }
+
+    // Handle account status update separately
+    if (validatedData.data.accountStatus && validatedData.data.accountStatus !== user.accountStatus) {
+      // Prevent suspending own account
+      if (id === sessionUser.id && validatedData.data.accountStatus !== 'active') {
+        return errorResponse('Cannot change your own account status', 400);
+      }
+      await userRepository.updateUserStatus(id, validatedData.data.accountStatus);
+    }
+
+    // Update other fields
+    if (Object.keys(updates).length > 0) {
+      await userRepository.updateUser(id, updates);
+    }
+
+    const updatedUser = await userRepository.getUserProfile(id);
+
+    return successResponse(updatedUser, 'User updated successfully');
   } catch (error) {
     return handleApiError(error);
   }
@@ -86,26 +107,23 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    await requireAdmin();
+    const sessionUser = await requireAdmin();
 
     const { id } = params;
 
-    await connectDB();
-
-    const user = await User.findById(id);
+    const user = await userRepository.getUserById(id);
 
     if (!user) {
       return errorResponse('User not found', 404);
     }
 
     // Prevent deleting own admin account
-    if (user._id.toString() === id && user.role === 'admin') {
+    if (id === sessionUser.id && user.role === 'admin') {
       return errorResponse('Cannot delete your own admin account', 400);
     }
 
     // Soft delete
-    user.accountStatus = 'deleted';
-    await user.save();
+    await userRepository.deleteUser(id);
 
     return successResponse(null, 'User deleted successfully');
   } catch (error) {
