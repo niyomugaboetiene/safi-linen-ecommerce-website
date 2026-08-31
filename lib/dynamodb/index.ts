@@ -1,5 +1,5 @@
 // DynamoDB client and utilities
-export { dynamoDB, DYNAMODB_TABLE_NAME, generateId, getTimestamp, GSIs, IndexKeys } from './dynamodb';
+export { dynamoDB, DYNAMODB_TABLE_NAME, generateId, getTimestamp, GSIs, IndexKeys } from '../dynamodb';
 
 // Repositories
 export { userRepository } from './repositories/userRepository';
