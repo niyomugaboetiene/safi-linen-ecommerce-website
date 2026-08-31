@@ -1,345 +1,230 @@
-'use client';
-
-import { getSession } from 'next-auth/react';
-
-const API_BASE_URL = '/api';
-
-interface FetchOptions extends RequestInit {
-  isFormData?: boolean;
+export interface ApiResponse<T = any> {
+  success: boolean;
+  message: string;
+  data?: T;
+  error?: string;
+  pagination?: PaginationInfo;
 }
 
-async function fetchAPI(
-  endpoint: string,
-  options: FetchOptions = {}
-) {
-  const session = await getSession();
-  
-  const headers: HeadersInit = {};
-  
-  // Don't set Content-Type for FormData (browser will set it with boundary)
-  if (!options.isFormData) {
-    headers['Content-Type'] = 'application/json';
-  }
-
-  // Add authentication if session exists
-  if (session?.user) {
-    // NextAuth JWT sessions don't need Authorization header
-    // The session cookie is automatically sent
-    // We'll keep this for backward compatibility
-    headers['X-User-Id'] = session.user.id;
-  }
-
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      ...headers,
-      ...options.headers,
-    },
-    credentials: 'include', // Important for session cookies
-  });
-
-  // Handle non-JSON responses
-  const contentType = response.headers.get('content-type');
-  let data;
-  
-  if (contentType && contentType.includes('application/json')) {
-    data = await response.json();
-  } else {
-    data = await response.text();
-  }
-
-  if (!response.ok) {
-    // Handle different error status codes
-    if (response.status === 401) {
-      // Redirect to login if unauthorized
-      window.location.href = '/login';
-      throw new Error('Please sign in to continue');
-    } else if (response.status === 403) {
-      throw new Error('You do not have permission to perform this action');
-    } else if (response.status === 404) {
-      throw new Error(data.message || 'Resource not found');
-    } else if (response.status === 422) {
-      throw new Error(data.message || 'Validation error');
-    } else {
-      throw new Error(data.message || 'Something went wrong');
-    }
-  }
-
-  return data;
+export interface PaginationInfo {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+  lastEvaluatedKey?: string; // Base64 encoded DynamoDB LastEvaluatedKey
 }
 
-// Auth API - Updated to use NextAuth directly
-export const authAPI = {
-  register: (data: any) =>
-    fetchAPI('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  
-  // Login is handled by NextAuth signIn() directly
-  // No need for a separate API call
-  
-  logout: () =>
-    fetchAPI('/auth/logout', {
-      method: 'POST',
-    }),
-};
+export interface QueryParams {
+  page?: number;
+  limit?: number;
+  sort?: string;
+  order?: 'asc' | 'desc';
+  search?: string;
+  status?: string;
+  category?: string;
+  featured?: string;
+  active?: string;
+  lastEvaluatedKey?: string; // Base64 encoded DynamoDB LastEvaluatedKey
+  [key: string]: any;
+}
 
-// User API
-export const userAPI = {
-  getProfile: () =>
-    fetchAPI('/users/profile'),
-  
-  updateProfile: (data: any) =>
-    fetchAPI('/users/profile', {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  
-  deleteAccount: () =>
-    fetchAPI('/users/profile', {
-      method: 'DELETE',
-    }),
-  
-  changePassword: (data: any) =>
-    fetchAPI('/users/change-password', {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-};
+export interface SessionUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'customer' | 'admin';
+  image?: string;
+  accountStatus?: 'active' | 'suspended' | 'deleted';
+}
 
-// Product API
-export const productAPI = {
-  getProducts: (params?: any) => {
-    const filteredParams = Object.fromEntries(
-      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
-    );
-    const queryString = new URLSearchParams(filteredParams).toString();
-    return fetchAPI(`/products${queryString ? `?${queryString}` : ''}`);
-  },
-  
-  getProduct: (id: string) =>
-    fetchAPI(`/products/${id}`),
-  
-  createProduct: (data: any) =>
-    fetchAPI('/products', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  
-  updateProduct: (id: string, data: any) =>
-    fetchAPI(`/products/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  
-  deleteProduct: (id: string) =>
-    fetchAPI(`/products/${id}`, {
-      method: 'DELETE',
-    }),
-};
+export interface AuthenticatedRequest extends Request {
+  user?: SessionUser;
+}
 
-// Category API
-export const categoryAPI = {
-  getCategories: (activeOnly?: boolean) => {
-    const params = activeOnly ? '?active=true' : '';
-    return fetchAPI(`/categories${params}`);
-  },
-  
-  getCategory: (id: string) =>
-    fetchAPI(`/categories/${id}`),
-  
-  createCategory: (data: any) =>
-    fetchAPI('/categories', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  
-  updateCategory: (id: string, data: any) =>
-    fetchAPI(`/categories/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  
-  deleteCategory: (id: string) =>
-    fetchAPI(`/categories/${id}`, {
-      method: 'DELETE',
-    }),
-};
+// DynamoDB specific types
+export interface DynamoDBKey {
+  PK: string;
+  SK: string;
+}
 
-// Cart API
-export const cartAPI = {
-  getCart: () =>
-    fetchAPI('/cart'),
-  
-  addToCart: (data: { productId: string; variantId: string; quantity: number }) =>
-    fetchAPI('/cart', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  
-  updateCartItem: (itemId: string, quantity: number) =>
-    fetchAPI(`/cart/${itemId}`, {
-      method: 'PUT',
-      body: JSON.stringify({ quantity }),
-    }),
-  
-  removeCartItem: (itemId: string) =>
-    fetchAPI(`/cart/${itemId}`, {
-      method: 'DELETE',
-    }),
-  
-  clearCart: () =>
-    fetchAPI('/cart', {
-      method: 'DELETE',
-    }),
-};
+export interface DynamoDBPaginationResult<T> {
+  data: T[];
+  pagination: PaginationInfo;
+}
 
-// Order API
-export const orderAPI = {
-  checkout: (data: any) =>
-    fetchAPI('/orders/checkout', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  
-  getOrders: (params?: any) => {
-    const filteredParams = Object.fromEntries(
-      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
-    );
-    const queryString = new URLSearchParams(filteredParams).toString();
-    return fetchAPI(`/orders${queryString ? `?${queryString}` : ''}`);
-  },
-  
-  getOrder: (id: string) =>
-    fetchAPI(`/orders/${id}`),
-  
-  updateOrderStatus: (id: string, status: string) =>
-    fetchAPI(`/orders/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ status }),
-    }),
-};
+export interface DynamoDBQueryOptions {
+  page?: number;
+  limit?: number;
+  lastEvaluatedKey?: string;
+  filterExpression?: string;
+  expressionAttributeValues?: Record<string, any>;
+  expressionAttributeNames?: Record<string, string>;
+  scanIndexForward?: boolean;
+}
 
-// Payment API
-export const paymentAPI = {
-  submitPayment: (data: any) =>
-    fetchAPI('/payments/submit', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  
-  getPayments: (params?: any) => {
-    const filteredParams = Object.fromEntries(
-      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
-    );
-    const queryString = new URLSearchParams(filteredParams).toString();
-    return fetchAPI(`/payments${queryString ? `?${queryString}` : ''}`);
-  },
-  
-  verifyPayment: (id: string, data: any) =>
-    fetchAPI(`/payments/${id}/verify`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-};
+export interface DynamoDBUpdateOptions {
+  updateExpression: string;
+  conditionExpression?: string;
+  expressionAttributeValues?: Record<string, any>;
+  expressionAttributeNames?: Record<string, string>;
+}
 
-// Review API
-export const reviewAPI = {
-  getReviews: (params?: any) => {
-    const filteredParams = Object.fromEntries(
-      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
-    );
-    const queryString = new URLSearchParams(filteredParams).toString();
-    return fetchAPI(`/reviews${queryString ? `?${queryString}` : ''}`);
-  },
-  
-  createReview: (data: any) =>
-    fetchAPI('/reviews', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  
-  updateReview: (id: string, data: any) =>
-    fetchAPI(`/reviews/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  
-  deleteReview: (id: string) =>
-    fetchAPI(`/reviews/${id}`, {
-      method: 'DELETE',
-    }),
-};
+// Error types
+export interface ApiError {
+  name: string;
+  message: string;
+  statusCode: number;
+  code?: string;
+}
 
-// Wishlist API
-export const wishlistAPI = {
-  getWishlist: () =>
-    fetchAPI('/wishlist'),
-  
-  addToWishlist: (productId: string) =>
-    fetchAPI('/wishlist', {
-      method: 'POST',
-      body: JSON.stringify({ productId }),
-    }),
-  
-  removeFromWishlist: (productId: string) =>
-    fetchAPI('/wishlist', {
-      method: 'DELETE',
-      body: JSON.stringify({ productId }),
-    }),
-};
+// Success response helper types
+export interface SuccessResponse<T> {
+  success: true;
+  message: string;
+  data: T;
+  pagination?: PaginationInfo;
+}
 
-// Settings API
-export const settingsAPI = {
-  getSettings: () =>
-    fetchAPI('/settings'),
-  
-  updateSettings: (data: any) =>
-    fetchAPI('/settings', {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-};
+export interface ErrorResponse {
+  success: false;
+  message: string;
+  error?: string;
+}
 
-// Admin API
-export const adminAPI = {
-  getStats: () =>
-    fetchAPI('/admin/stats'),
-  
-  getUsers: (params?: any) => {
-    const filteredParams = Object.fromEntries(
-      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
-    );
-    const queryString = new URLSearchParams(filteredParams).toString();
-    return fetchAPI(`/users${queryString ? `?${queryString}` : ''}`);
-  },
-  
-  getUser: (id: string) =>
-    fetchAPI(`/admin/users/${id}`),
-  
-  updateUser: (id: string, data: any) =>
-    fetchAPI(`/admin/users/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  
-  deleteUser: (id: string) =>
-    fetchAPI(`/admin/users/${id}`, {
-      method: 'DELETE',
-    }),
-};
+// Auth types
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
 
-// Upload API
-export const uploadAPI = {
-  uploadImage: async (file: File) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    return fetchAPI('/upload', {
-      method: 'POST',
-      body: formData,
-      isFormData: true,
-    });
-  },
-};
+export interface RegisterData {
+  name: string;
+  email: string;
+  phone?: string;
+  password: string;
+  confirmPassword: string;
+}
+
+export interface AuthSession {
+  user: SessionUser;
+  expires: string;
+}
+
+// Admin stats types
+export interface AdminStats {
+  totalUsers: number;
+  totalProducts: number;
+  totalOrders: number;
+  totalRevenue: number;
+  pendingPayments: number;
+  totalReviews: number;
+  recentOrders: Array<{
+    id: string;
+    orderNumber: string;
+    total: number;
+    status: string;
+    createdAt: string;
+  }>;
+  lowStockProducts: Array<{
+    id: string;
+    name: string;
+    variants: Array<{
+      id: string;
+      sku: string;
+      color?: string;
+      size?: string;
+      stock: number;
+    }>;
+  }>;
+}
+
+// Upload types
+export interface UploadResponse {
+  url: string;
+  publicId: string;
+  width?: number;
+  height?: number;
+  format?: string;
+}
+
+// Payment types
+export interface PaymentSubmitData {
+  orderId: string;
+  method: 'mtn' | 'airtel';
+  transactionId: string;
+  phoneNumber: string;
+}
+
+export interface PaymentVerifyData {
+  status: 'verified' | 'rejected';
+  rejectionReason?: string;
+}
+
+// Order types
+export interface OrderCheckoutData {
+  deliveryZone: 'kigali' | 'outside_kigali';
+  shippingAddress: {
+    fullName: string;
+    phone: string;
+    email: string;
+    address: string;
+    city: string;
+    district: string;
+  };
+}
+
+// Cart types
+export interface AddToCartData {
+  productId: string;
+  variantId: string;
+  quantity: number;
+}
+
+export interface UpdateCartItemData {
+  quantity: number;
+}
+
+// Wishlist types
+export interface WishlistData {
+  productId: string;
+}
+
+// Review types
+export interface CreateReviewData {
+  productId: string;
+  rating: number;
+  comment: string;
+}
+
+export interface UpdateReviewData {
+  rating?: number;
+  comment?: string;
+}
+
+// Settings types
+export interface UpdateSettingsData {
+  business?: {
+    businessName?: string;
+    phone?: string;
+    email?: string;
+  };
+  delivery?: {
+    kigaliFee?: number;
+    outsideKigaliFee?: number;
+  };
+  payment?: {
+    mtnNumber?: string;
+    airtelNumber?: string;
+    paymentInstructions?: string;
+  };
+  site?: {
+    logoUrl?: string;
+    socialLinks?: {
+      facebook?: string;
+      instagram?: string;
+      twitter?: string;
+    };
+  };
+}

@@ -65,16 +65,72 @@ export function parsePaginationParams(
 export function createPaginationInfo(
   page: number,
   limit: number,
-  total: number
+  total: number,
+  lastEvaluatedKey?: Record<string, any>
 ): PaginationInfo {
-  const totalPages = Math.ceil(total / limit);
+  const totalPages = Math.ceil(total / limit) || 1;
   
   return {
     page,
     limit,
     total,
     totalPages,
-    hasNextPage: page < totalPages,
+    hasNextPage: !!lastEvaluatedKey,
     hasPrevPage: page > 1,
+    ...(lastEvaluatedKey && { lastEvaluatedKey }),
+  };
+}
+
+// Helper to convert DynamoDB LastEvaluatedKey to a safe format for frontend
+export function encodeLastEvaluatedKey(
+  lastEvaluatedKey?: Record<string, any>
+): string | undefined {
+  if (!lastEvaluatedKey) return undefined;
+  
+  try {
+    return Buffer.from(JSON.stringify(lastEvaluatedKey)).toString('base64');
+  } catch (error) {
+    console.error('Error encoding LastEvaluatedKey:', error);
+    return undefined;
+  }
+}
+
+// Helper to decode LastEvaluatedKey from frontend
+export function decodeLastEvaluatedKey(
+  encodedKey?: string
+): Record<string, any> | undefined {
+  if (!encodedKey) return undefined;
+  
+  try {
+    return JSON.parse(Buffer.from(encodedKey, 'base64').toString());
+  } catch (error) {
+    console.error('Error decoding LastEvaluatedKey:', error);
+    return undefined;
+  }
+}
+
+// Helper to create pagination from DynamoDB result
+export function createDynamoPagination(
+  page: number,
+  limit: number,
+  result: {
+    Count?: number;
+    ScannedCount?: number;
+    LastEvaluatedKey?: Record<string, any>;
+  }
+): PaginationInfo {
+  const count = result.Count || 0;
+  const totalPages = Math.ceil(count / limit) || 1;
+  
+  return {
+    page,
+    limit,
+    total: count,
+    totalPages,
+    hasNextPage: !!result.LastEvaluatedKey,
+    hasPrevPage: page > 1,
+    ...(result.LastEvaluatedKey && {
+      lastEvaluatedKey: encodeLastEvaluatedKey(result.LastEvaluatedKey),
+    }),
   };
 }
