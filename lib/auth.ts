@@ -1,7 +1,7 @@
 import NextAuth, { NextAuthOptions } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import connectDB from './mongodb';
+import connectDB from './dynamodb';
 import User from '@/models/User';
 
 if (!process.env.GOOGLE_CLIENT_ID) {

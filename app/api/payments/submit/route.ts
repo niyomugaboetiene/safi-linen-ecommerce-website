@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/mongodb';
+import connectDB from '@/lib/dynamodb';
 import Order from '@/models/Order';
 import Payment from '@/models/Payment';
 import { requireAuth } from '@/lib/auth-utils';

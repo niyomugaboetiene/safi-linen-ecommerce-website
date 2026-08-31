@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/mongodb';
+import connectDB from '@/lib/dynamodb';
 import Review from '@/models/Review';
 import Product from '@/models/Product';
 import Order from '@/models/Order';

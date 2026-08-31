@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/mongodb';
+import connectDB from '@/lib/dynamodb';
 import Product from '@/models/Product';
 import { requireAuth, requireAdmin } from '@/lib/auth-utils';
 import { updateProductSchema } from '@/validators/product';

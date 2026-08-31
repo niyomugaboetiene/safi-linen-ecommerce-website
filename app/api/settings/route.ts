@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/mongodb';
+import connectDB from '@/lib/dynamodb';
 import Settings from '@/models/Settings';
 import { requireAuth, requireAdmin } from '@/lib/auth-utils';
 import { successResponse, errorResponse } from '@/lib/api-response';
