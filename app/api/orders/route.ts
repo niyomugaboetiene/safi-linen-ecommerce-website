@@ -1,10 +1,8 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/dynamodb';
-import Order from '@/models/Order';
-import { requireAuth, requireAdmin } from '@/lib/auth-utils';
+import { orderRepository } from '@/lib/dynamodb/repositories/orderRepository';
+import { requireAuth } from '@/lib/auth-utils';
 import { orderQuerySchema } from '@/validators/order';
 import { paginatedResponse, errorResponse } from '@/lib/api-response';
-import { parsePaginationParams, createPaginationInfo } from '@/lib/api-response';
 import { handleApiError } from '@/lib/error-handler';
 
 export async function GET(req: NextRequest) {
@@ -12,11 +10,10 @@ export async function GET(req: NextRequest) {
     const sessionUser = await requireAuth();
 
     const { searchParams } = new URL(req.url);
-    const { page, limit, skip } = parsePaginationParams(searchParams);
     
     const queryParams = {
-      page,
-      limit,
+      page: parseInt(searchParams.get('page') || '1'),
+      limit: parseInt(searchParams.get('limit') || '20'),
       status: searchParams.get('status') || undefined,
       sort: searchParams.get('sort') || 'newest',
     };
@@ -31,37 +28,30 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    await connectDB();
+    let result;
 
-    // Build query
-    const query: any = {};
-    
     // Customers can only see their own orders
-    if (sessionUser.role !== 'admin') {
-      query.user = sessionUser.id;
+    if (sessionUser.role === 'admin') {
+      // Admin can see all orders
+      result = await orderRepository.listAllOrders({
+        page: validatedQuery.data.page,
+        limit: validatedQuery.data.limit,
+        status: validatedQuery.data.status,
+      });
+    } else {
+      // Regular user sees only their orders
+      result = await orderRepository.getUserOrders(sessionUser.id, {
+        page: validatedQuery.data.page,
+        limit: validatedQuery.data.limit,
+        status: validatedQuery.data.status,
+      });
     }
-    
-    if (validatedQuery.data.status) {
-      query.status = validatedQuery.data.status;
-    }
 
-    // Build sort
-    const sortOption = validatedQuery.data.sort === 'oldest' 
-      ? { createdAt: 1 } 
-      : { createdAt: -1 };
-
-    const [orders, total] = await Promise.all([
-      Order.find(query)
-        .select('-__v')
-        .sort(sortOption)
-        .skip(skip)
-        .limit(limit),
-      Order.countDocuments(query),
-    ]);
-
-    const pagination = createPaginationInfo(page, limit, total);
-
-    return paginatedResponse(orders, pagination, 'Orders fetched successfully');
+    return paginatedResponse(
+      result.data,
+      result.pagination,
+      'Orders fetched successfully'
+    );
   } catch (error) {
     return handleApiError(error);
   }

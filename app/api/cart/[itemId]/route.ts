@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/dynamodb';
-import Cart from '@/models/Cart';
-import Product from '@/models/Product';
+import { cartRepository } from '@/lib/dynamodb/repositories/cartRepository';
+import { productRepository } from '@/lib/dynamodb/repositories/productRepository';
 import { requireAuth } from '@/lib/auth-utils';
 import { updateCartItemSchema } from '@/validators/cart';
 import { successResponse, errorResponse } from '@/lib/api-response';
@@ -33,32 +32,36 @@ export async function PUT(
 
     const { quantity } = validatedData.data;
 
-    await connectDB();
-
-    const cart = await Cart.findOne({ user: sessionUser.id });
-
-    if (!cart) {
-      return errorResponse('Cart not found', 404);
+    // Parse itemId to get productId and variantId
+    // itemId format: "PRODUCT#<productId>#VARIANT#<variantId>"
+    const itemParts = itemId.split('#');
+    
+    if (itemParts.length !== 4) {
+      return errorResponse('Invalid item ID format', 400);
     }
 
-    const item = cart.items.find(
-      item => item._id.toString() === itemId
+    const productId = itemParts[1];
+    const variantId = itemParts[3];
+
+    // Check if item exists in cart
+    const existingItem = await cartRepository.getCartItem(
+      sessionUser.id,
+      productId,
+      variantId
     );
 
-    if (!item) {
+    if (!existingItem) {
       return errorResponse('Item not found in cart', 404);
     }
 
     // Check stock availability
-    const product = await Product.findById(item.product);
+    const product = await productRepository.getProductById(productId);
 
     if (!product || !product.active) {
       return errorResponse('Product not found or inactive', 404);
     }
 
-    const variant = product.variants.find(
-      v => v._id.toString() === item.variant.toString() && v.active
-    );
+    const variant = product.variants.find(v => v.variantId === variantId && v.active);
 
     if (!variant) {
       return errorResponse('Variant not found or inactive', 404);
@@ -71,10 +74,20 @@ export async function PUT(
       );
     }
 
-    item.quantity = quantity;
-    await cart.save();
+    if (quantity > 100) {
+      return errorResponse('Maximum quantity per item is 100', 400);
+    }
 
-    return successResponse(cart, 'Cart item updated successfully');
+    await cartRepository.updateCartItemQuantity(
+      sessionUser.id,
+      productId,
+      variantId,
+      quantity
+    );
+
+    const updatedCart = await cartRepository.getCart(sessionUser.id);
+
+    return successResponse(updatedCart, 'Cart item updated successfully');
   } catch (error) {
     return handleApiError(error);
   }
@@ -88,26 +101,37 @@ export async function DELETE(
     const sessionUser = await requireAuth();
     const { itemId } = params;
 
-    await connectDB();
-
-    const cart = await Cart.findOne({ user: sessionUser.id });
-
-    if (!cart) {
-      return errorResponse('Cart not found', 404);
+    // Parse itemId to get productId and variantId
+    // itemId format: "PRODUCT#<productId>#VARIANT#<variantId>"
+    const itemParts = itemId.split('#');
+    
+    if (itemParts.length !== 4) {
+      return errorResponse('Invalid item ID format', 400);
     }
 
-    const itemIndex = cart.items.findIndex(
-      item => item._id.toString() === itemId
+    const productId = itemParts[1];
+    const variantId = itemParts[3];
+
+    // Check if item exists in cart
+    const existingItem = await cartRepository.getCartItem(
+      sessionUser.id,
+      productId,
+      variantId
     );
 
-    if (itemIndex === -1) {
+    if (!existingItem) {
       return errorResponse('Item not found in cart', 404);
     }
 
-    cart.items.splice(itemIndex, 1);
-    await cart.save();
+    await cartRepository.removeFromCart(
+      sessionUser.id,
+      productId,
+      variantId
+    );
 
-    return successResponse(cart, 'Item removed from cart successfully');
+    const updatedCart = await cartRepository.getCart(sessionUser.id);
+
+    return successResponse(updatedCart, 'Item removed from cart successfully');
   } catch (error) {
     return handleApiError(error);
   }

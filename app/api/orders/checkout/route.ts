@@ -1,20 +1,14 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/dynamodb';
-import Cart from '@/models/Cart';
-import Product from '@/models/Product';
-import Order from '@/models/Order';
-import Settings from '@/models/Settings';
-import User from '@/models/User';
+import { cartRepository } from '@/lib/dynamodb/repositories/cartRepository';
+import { productRepository } from '@/lib/dynamodb/repositories/productRepository';
+import { orderRepository } from '@/lib/dynamodb/repositories/orderRepository';
+import { settingsRepository } from '@/lib/dynamodb/repositories/settingsRepository';
 import { requireAuth } from '@/lib/auth-utils';
 import { createOrderSchema } from '@/validators/order';
 import { successResponse, errorResponse } from '@/lib/api-response';
 import { handleApiError } from '@/lib/error-handler';
-import mongoose from 'mongoose';
 
 export async function POST(req: NextRequest) {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     const sessionUser = await requireAuth();
 
@@ -33,40 +27,28 @@ export async function POST(req: NextRequest) {
 
     const { deliveryZone, shippingAddress } = validatedData.data;
 
-    await connectDB();
+    // Get user's cart
+    const cart = await cartRepository.getCart(sessionUser.id);
 
-    // Get cart
-    const cart = await Cart.findOne({ user: sessionUser.id });
-
-    if (!cart || cart.items.length === 0) {
+    if (!cart.items || cart.items.length === 0) {
       return errorResponse('Cart is empty', 400);
     }
 
-    // Get settings for delivery fee
-    const settings = await Settings.findOne();
-    
-    if (!settings) {
-      return errorResponse('Settings not configured', 500);
-    }
+    // Get delivery fee from settings
+    const deliveryFee = await settingsRepository.getDeliveryFee(deliveryZone);
 
-    const deliveryFee = deliveryZone === 'kigali' 
-      ? settings.delivery.kigaliFee 
-      : settings.delivery.outsideKigaliFee;
-
-    // Validate all cart items
-    let subtotal = 0;
+    // Prepare order items and validate stock
     const orderItems = [];
+    let subtotal = 0;
 
     for (const item of cart.items) {
-      const product = await Product.findById(item.product);
+      const product = await productRepository.getProductById(item.productId);
 
       if (!product || !product.active) {
-        return errorResponse(`Product ${item.product} not found or inactive`, 400);
+        return errorResponse(`Product ${item.productId} not found or inactive`, 400);
       }
 
-      const variant = product.variants.find(
-        v => v._id.toString() === item.variant.toString() && v.active
-      );
+      const variant = product.variants.find(v => v.variantId === item.variantId && v.active);
 
       if (!variant) {
         return errorResponse(`Variant not found or inactive for product ${product.name}`, 400);
@@ -79,66 +61,30 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Calculate item subtotal using current price
       const itemSubtotal = variant.price * item.quantity;
       subtotal += itemSubtotal;
 
       orderItems.push({
-        product: product._id,
-        productName: product.name,
-        variant: variant._id,
-        variantDetails: {
-          color: variant.color,
-          size: variant.size,
-          sku: variant.sku,
-        },
-        price: variant.price,
+        productId: product.productId,
+        variantId: variant.variantId,
         quantity: item.quantity,
-        subtotal: itemSubtotal,
       });
-
-      // Reduce stock atomically
-      await Product.updateOne(
-        { 
-          _id: product._id,
-          'variants._id': variant._id,
-          'variants.stock': { $gte: item.quantity }
-        },
-        {
-          $inc: { 'variants.$.stock': -item.quantity }
-        }
-      );
     }
 
-    const total = subtotal + deliveryFee;
-
-    // Generate order number
-    const orderNumber = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-
-    // Create order
-    const order = await Order.create({
-      user: sessionUser.id,
-      orderNumber,
+    // Create order (this will also reduce stock atomically)
+    const order = await orderRepository.createOrder({
+      userId: sessionUser.id,
       items: orderItems,
-      subtotal,
-      deliveryFee,
-      total,
       deliveryZone,
       shippingAddress,
-      status: 'pending_payment',
+      deliveryFee,
     });
 
-    // Clear cart
-    cart.items = [];
-    await cart.save();
-
-    await session.commitTransaction();
+    // Clear cart after successful order
+    await cartRepository.clearCart(sessionUser.id);
 
     return successResponse(order, 'Order created successfully', 201);
   } catch (error) {
-    await session.abortTransaction();
     return handleApiError(error);
-  } finally {
-    session.endSession();
   }
 }

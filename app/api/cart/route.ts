@@ -1,9 +1,8 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/dynamodb';
-import Cart from '@/models/Cart';
-import Product from '@/models/Product';
+import { cartRepository } from '@/lib/dynamodb/repositories/cartRepository';
+import { productRepository } from '@/lib/dynamodb/repositories/productRepository';
 import { requireAuth } from '@/lib/auth-utils';
-import { addToCartSchema, updateCartItemSchema, removeFromCartSchema } from '@/validators/cart';
+import { addToCartSchema } from '@/validators/cart';
 import { successResponse, errorResponse } from '@/lib/api-response';
 import { handleApiError } from '@/lib/error-handler';
 
@@ -11,25 +10,43 @@ export async function GET(req: NextRequest) {
   try {
     const sessionUser = await requireAuth();
 
-    await connectDB();
+    const cart = await cartRepository.getCart(sessionUser.id);
 
-    const cart = await Cart.findOne({ user: sessionUser.id })
-      .populate({
-        path: 'items.product',
-        select: 'name slug active variants',
-      });
-
-    if (!cart) {
-      return successResponse({ items: [] }, 'Cart is empty');
+    // Populate cart items with product and variant details
+    const populatedItems = [];
+    
+    for (const item of cart.items) {
+      const product = await productRepository.getProductById(item.productId);
+      
+      if (product && product.active) {
+        const variant = product.variants.find(v => v.variantId === item.variantId);
+        
+        if (variant && variant.active) {
+          populatedItems.push({
+            id: item.id,
+            product: {
+              id: product.productId,
+              name: product.name,
+              slug: product.slug,
+              active: product.active,
+            },
+            variant: {
+              id: variant.variantId,
+              sku: variant.sku,
+              color: variant.color,
+              size: variant.size,
+              price: variant.price,
+              stock: variant.stock,
+              images: variant.images,
+              active: variant.active,
+            },
+            quantity: item.quantity,
+          });
+        }
+      }
     }
 
-    // Filter out items with inactive or deleted products
-    const validItems = cart.items.filter(item => {
-      const product = item.product as any;
-      return product && product.active;
-    });
-
-    return successResponse({ items: validItems }, 'Cart fetched successfully');
+    return successResponse({ items: populatedItems }, 'Cart fetched successfully');
   } catch (error) {
     return handleApiError(error);
   }
@@ -54,22 +71,15 @@ export async function POST(req: NextRequest) {
 
     const { productId, variantId, quantity } = validatedData.data;
 
-    await connectDB();
-
     // Check if product exists and is active
-    const product = await Product.findOne({
-      _id: productId,
-      active: true,
-    });
+    const product = await productRepository.getProductById(productId);
 
-    if (!product) {
+    if (!product || !product.active) {
       return errorResponse('Product not found or inactive', 404);
     }
 
     // Check if variant exists and is active
-    const variant = product.variants.find(
-      v => v._id.toString() === variantId && v.active
-    );
+    const variant = product.variants.find(v => v.variantId === variantId && v.active);
 
     if (!variant) {
       return errorResponse('Variant not found or inactive', 404);
@@ -83,23 +93,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Find or create cart
-    let cart = await Cart.findOne({ user: sessionUser.id });
-
-    if (!cart) {
-      cart = new Cart({ user: sessionUser.id, items: [] });
-    }
-
-    // Check if item already exists in cart
-    const existingItemIndex = cart.items.findIndex(
-      item => 
-        item.product.toString() === productId &&
-        item.variant.toString() === variantId
+    // Check current quantity in cart
+    const existingItem = await cartRepository.getCartItem(
+      sessionUser.id,
+      productId,
+      variantId
     );
 
-    if (existingItemIndex > -1) {
-      // Update quantity
-      const newQuantity = cart.items[existingItemIndex].quantity + quantity;
+    if (existingItem) {
+      const newQuantity = existingItem.quantity + quantity;
       
       if (newQuantity > 100) {
         return errorResponse('Maximum quantity per item is 100', 400);
@@ -111,20 +113,17 @@ export async function POST(req: NextRequest) {
           400
         );
       }
-      
-      cart.items[existingItemIndex].quantity = newQuantity;
-    } else {
-      // Add new item
-      cart.items.push({
-        product: productId,
-        variant: variantId,
-        quantity,
-      });
     }
 
-    await cart.save();
+    await cartRepository.addToCart(sessionUser.id, {
+      productId,
+      variantId,
+      quantity,
+    });
 
-    return successResponse(cart, 'Item added to cart successfully', 201);
+    const updatedCart = await cartRepository.getCart(sessionUser.id);
+
+    return successResponse(updatedCart, 'Item added to cart successfully', 201);
   } catch (error) {
     return handleApiError(error);
   }
@@ -134,16 +133,7 @@ export async function DELETE(req: NextRequest) {
   try {
     const sessionUser = await requireAuth();
 
-    await connectDB();
-
-    const cart = await Cart.findOne({ user: sessionUser.id });
-
-    if (!cart) {
-      return successResponse(null, 'Cart is already empty');
-    }
-
-    cart.items = [];
-    await cart.save();
+    await cartRepository.clearCart(sessionUser.id);
 
     return successResponse(null, 'Cart cleared successfully');
   } catch (error) {

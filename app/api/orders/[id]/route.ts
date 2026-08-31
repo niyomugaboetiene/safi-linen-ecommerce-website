@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
-import connectDB from '@/lib/dynamodb';
-import Order from '@/models/Order';
+import { orderRepository } from '@/lib/dynamodb/repositories/orderRepository';
+import { paymentRepository } from '@/lib/dynamodb/repositories/paymentRepository';
 import { requireAuth, requireAdmin } from '@/lib/auth-utils';
 import { updateOrderStatusSchema } from '@/validators/order';
 import { successResponse, errorResponse } from '@/lib/api-response';
@@ -14,24 +14,48 @@ export async function GET(
     const sessionUser = await requireAuth();
     const { id } = params;
 
-    await connectDB();
+    let order;
 
-    const query: any = { _id: id };
-    
     // Customers can only view their own orders
-    if (sessionUser.role !== 'admin') {
-      query.user = sessionUser.id;
+    if (sessionUser.role === 'admin') {
+      order = await orderRepository.getOrderById(id);
+    } else {
+      order = await orderRepository.getOrderById(id, sessionUser.id);
     }
-
-    const order = await Order.findOne(query)
-      .populate('payment', 'method transactionId phoneNumber status')
-      .select('-__v');
 
     if (!order) {
       return errorResponse('Order not found', 404);
     }
 
-    return successResponse(order, 'Order fetched successfully');
+    // Get payment information if available
+    let payment = null;
+    if (order.paymentId) {
+      payment = await paymentRepository.getPaymentById(order.paymentId);
+    }
+
+    const response = {
+      id: order.orderId,
+      orderNumber: order.orderNumber,
+      userId: order.userId,
+      items: order.items,
+      subtotal: order.subtotal,
+      deliveryFee: order.deliveryFee,
+      total: order.total,
+      deliveryZone: order.deliveryZone,
+      shippingAddress: order.shippingAddress,
+      status: order.status,
+      payment: payment ? {
+        id: payment.paymentId,
+        method: payment.method,
+        transactionId: payment.transactionId,
+        phoneNumber: payment.phoneNumber,
+        status: payment.status,
+      } : null,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+    };
+
+    return successResponse(response, 'Order fetched successfully');
   } catch (error) {
     return handleApiError(error);
   }
@@ -61,18 +85,26 @@ export async function PUT(
       );
     }
 
-    await connectDB();
-
-    const order = await Order.findById(id);
+    const order = await orderRepository.getOrderById(id);
 
     if (!order) {
       return errorResponse('Order not found', 404);
     }
 
-    order.status = validatedData.data.status;
-    await order.save();
+    const updatedOrder = await orderRepository.updateOrderStatus(id, validatedData.data.status);
 
-    return successResponse(order, 'Order status updated successfully');
+    if (!updatedOrder) {
+      return errorResponse('Failed to update order status', 500);
+    }
+
+    const response = {
+      id: updatedOrder.orderId,
+      orderNumber: updatedOrder.orderNumber,
+      status: updatedOrder.status,
+      updatedAt: updatedOrder.updatedAt,
+    };
+
+    return successResponse(response, 'Order status updated successfully');
   } catch (error) {
     return handleApiError(error);
   }
