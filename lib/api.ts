@@ -242,8 +242,9 @@ export const paymentAPI = {
 export const reviewAPI = {
   getReviews: (params?: any) => {
     const filteredParams = Object.fromEntries(
-      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
-    );
+        Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
+      ) as Record<string, string>;
+
     const queryString = new URLSearchParams(filteredParams).toString();
     return fetchAPI(`/reviews${queryString ? `?${queryString}` : ''}`);
   },
@@ -302,9 +303,10 @@ export const adminAPI = {
     fetchAPI('/admin/stats'),
   
   getUsers: (params?: any) => {
-    const filteredParams = Object.fromEntries(
-      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
-    );
+  const filteredParams = Object.fromEntries(
+    Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
+  ) as Record<string, string>;
+
     const queryString = new URLSearchParams(filteredParams).toString();
     return fetchAPI(`/users${queryString ? `?${queryString}` : ''}`);
   },
