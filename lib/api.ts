@@ -102,10 +102,11 @@ export const userAPI = {
 // Product API
 export const productAPI = {
   getProducts: (params?: any) => {
-    const filteredParams = Object.fromEntries(
-      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
-    );
-    const queryString = new URLSearchParams(filteredParams).toString();
+  const filteredParams = Object.fromEntries(
+    Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
+  ) as Record<string, string>;
+
+  const queryString = new URLSearchParams(filteredParams).toString();
     return fetchAPI(`/products${queryString ? `?${queryString}` : ''}`);
   },
   
@@ -195,9 +196,10 @@ export const orderAPI = {
     }),
   
   getOrders: (params?: any) => {
-    const filteredParams = Object.fromEntries(
-      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
-    );
+  const filteredParams = Object.fromEntries(
+    Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
+  ) as Record<string, string>;
+
     const queryString = new URLSearchParams(filteredParams).toString();
     return fetchAPI(`/orders${queryString ? `?${queryString}` : ''}`);
   },
@@ -221,9 +223,10 @@ export const paymentAPI = {
     }),
   
   getPayments: (params?: any) => {
-    const filteredParams = Object.fromEntries(
-      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
-    );
+  const filteredParams = Object.fromEntries(
+    Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== '')
+  ) as Record<string, string>;
+
     const queryString = new URLSearchParams(filteredParams).toString();
     return fetchAPI(`/payments${queryString ? `?${queryString}` : ''}`);
   },
